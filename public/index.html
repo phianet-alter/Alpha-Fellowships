@@ -4340,11 +4340,11 @@
   }
   function aiRender(){ const l = document.getElementById('aiLog'); if(!l) return; l.innerHTML = AI.msgs.map(m=>`<div class="ai-b ${m.r==='me'?'me':'bot'}">${m.h}</div>`).join(''); const s = document.getElementById('screenContent'); if(s) s.scrollTop = s.scrollHeight; }
   // ---------------- GEMINI (cloud brain for Alpha AI) ----------------
-  // The API key is NOT stored here. Requests go to /api/ai (see src/worker.js), which holds the
-  // key as the Cloudflare secret GEMINI_KEY.
+  // NOTE: a key placed in front-end code is visible to anyone who opens the app.
+  // Restrict it in Google Cloud / AI Studio, or point GEMINI.proxy at your own server (see README comments).
   const GEMINI = {
-    key: '',
-    proxy: '/api/ai',                                   // optional: your own endpoint that accepts {system, contents} and returns {text}
+    key: 'AQ.Ab8RN6If8vGx251ZG8L6HelKj2yGf2QI5hnl0gqv1IDeoQN0AQ',
+    proxy: '',                                   // optional: your own endpoint that accepts {system, contents} and returns {text}
     models: ['gemini-flash-latest', 'gemini-2.5-flash'],
     timeoutMs: 25000,
     disabled: false, busy: false, route: null
@@ -4427,7 +4427,7 @@
     const i = document.getElementById('aiIn'); if(i) i.value = '';
     // Exact scripture lookups and the Verse of the Day stay on-device (verbatim KJV, instant, works offline)
     let exact = null; try { exact = aiDailyVerse(q) || aiBibleRef(q); } catch(e){}
-    if(exact || GEMINI.disabled || !(GEMINI.key || GEMINI.proxy)){
+    if(exact || GEMINI.disabled || !GEMINI.key){
       AI.msgs.push({ r:'bot', h: exact || aiAnswer(q), t:'' }); aiRender(); return;
     }
     GEMINI.busy = true; AI._lastQ = q;
@@ -4774,6 +4774,75 @@ function afQR(text){
   }
   function close(){if(el)el.classList.remove('show');}
   document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('#shareAppBtn');if(b){ev.preventDefault();open();}});
+})();
+</script>
+<script>
+/* Android app screen sharing: inside the Alpha Fellowship Android app the phone's screen is captured natively
+   and drawn into a canvas; this makes getDisplayMedia() available so the existing call code works unchanged.
+   Does nothing in normal browsers. */
+(function(){
+  var md = navigator.mediaDevices;
+  if(!window.AndroidShare || !md || md.getDisplayMedia) return;
+  var cv=null, ctx=null, stream=null, track=null, pending=null, keep=null, timer=null, origStop=null;
+
+  function denied(){ var e=new Error('Permission denied'); e.name='NotAllowedError'; return e; }
+  function failed(){ var e=new Error('Screen capture failed'); e.name='AbortError'; return e; }
+  function cleanup(){
+    if(keep){ clearInterval(keep); keep=null; }
+    if(timer){ clearTimeout(timer); timer=null; }
+    cv=null; ctx=null; stream=null; track=null; origStop=null;
+  }
+
+  window.__afFrame = function(b64){
+    var c=cv; if(!c) return;
+    var img=new Image();
+    img.onload=function(){
+      if(cv!==c) return;
+      if(c.width!==img.width||c.height!==img.height){ c.width=img.width; c.height=img.height; }
+      ctx.drawImage(img,0,0);
+      if(track&&track.requestFrame) track.requestFrame();
+      if(pending){
+        var p=pending; pending=null;
+        if(timer){ clearTimeout(timer); timer=null; }
+        p.resolve(stream);
+      }
+    };
+    img.src='data:image/jpeg;base64,'+b64;
+  };
+
+  window.__afShareDenied = function(){
+    if(pending){ var p=pending; pending=null; cleanup(); p.reject(denied()); }
+  };
+
+  window.__afShareStopped = function(){
+    if(pending){ var p=pending; pending=null; cleanup(); p.reject(failed()); return; }
+    var t=track, os=origStop;
+    if(!t) return;
+    cleanup();
+    try{ os(); }catch(e){}
+    try{ t.dispatchEvent(new Event('ended')); }catch(e){}   // the call code's "ended" handler stops the share
+  };
+
+  md.getDisplayMedia = function(){
+    return new Promise(function(resolve,reject){
+      if(pending||track){ reject(denied()); return; }
+      cv=document.createElement('canvas'); cv.width=360; cv.height=640;
+      ctx=cv.getContext('2d'); ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
+      stream=cv.captureStream(0);
+      track=stream.getVideoTracks()[0];
+      var t=track; origStop=t.stop.bind(t);
+      t.stop=function(){                                   // the page stopped sharing -> stop the phone capture too
+        try{ origStop(); }catch(e){}
+        if(track===t){ cleanup(); try{ AndroidShare.stop(); }catch(e){} }
+      };
+      pending={resolve:resolve,reject:reject};
+      timer=setTimeout(function(){                         // no frame arrived
+        if(pending){ var p=pending; pending=null; cleanup(); try{ AndroidShare.stop(); }catch(e){} p.reject(failed()); }
+      },20000);
+      keep=setInterval(function(){ if(track&&track.requestFrame) track.requestFrame(); },1000);   // keeps a still screen alive for new joiners
+      try{ AndroidShare.start(); }catch(e){ var p=pending; pending=null; cleanup(); p.reject(failed()); }
+    });
+  };
 })();
 </script>
 </body>
